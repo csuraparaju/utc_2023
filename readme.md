@@ -1,5 +1,6 @@
 ### Set up
 - Clone the repository
+    - `git clone https://github.com/csuraparaju/utc_2024.git`
 - (Optional) Create a virtual environment called utc24
     - `python3 -m venv utc24`
     - `source utc24/bin/activate`

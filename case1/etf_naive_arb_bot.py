@@ -28,7 +28,7 @@ SWAP_MAP: Dict[str, SwapInfo] = {'toJAK': SwapInfo('toJAK', [('EPT', 2), ('DLO',
 UNDERLYING: List[str] = ['EPT', 'DLO', 'MKU', 'IGM', 'BRV']
 ETF: List[str] = ['JAK', 'SCP']
 
-class NaiveArb(xchange_client.XChangeClient):
+class NaiveETFArb(xchange_client.XChangeClient):
     def __init__(self, host: str, username: str, password: str) -> None:
         super().__init__(host, username, password)
         self.best_underlying_asks: Dict[str, int] = defaultdict(int)
@@ -95,7 +95,7 @@ async def main() -> None:
     SERVER = config['SERVER']
     username = config['USERNAME']
     password = config['PASSWORD']
-    bot = NaiveArb(SERVER, username, password)
+    bot = NaiveETFArb(SERVER, username, password)
     await bot.start()
     return
 

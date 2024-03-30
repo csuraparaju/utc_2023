@@ -10,7 +10,10 @@
 ### Running the script
 - Create a .env file in the root directory of the project
     - Add the following variables to the .env file
+        - `SERVER=staging.uchicagotradingcompetition.com:3333`
         - `USERNAME=username-given-to-us-by-utc`
         - `PASSWORD=password-given-to-us-by-utc`
+- Run the bots
+    - `python3 case1/{bot_name}.py`
 
 

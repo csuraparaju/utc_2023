@@ -3,6 +3,7 @@ from typing import Optional
 from xchangelib import xchange_client
 import asyncio
 from dotenv import dotenv_values, find_dotenv
+from enum import Enum
 
 
 class MyXchangeClient(xchange_client.XChangeClient):
@@ -23,15 +24,15 @@ class MyXchangeClient(xchange_client.XChangeClient):
 
 
     async def bot_handle_trade_msg(self, symbol: str, price: int, qty: int):
-        # print("something was traded")
+        print("something was traded")
         pass
 
     async def bot_handle_book_update(self, symbol: str) -> None:
-        # print("book update")
+        print("book update")
         pass
 
     async def bot_handle_swap_response(self, swap: str, qty: int, success: bool):
-        # print("Swap response")
+        print("Swap response")
         pass
 
 
@@ -80,7 +81,7 @@ class MyXchangeClient(xchange_client.XChangeClient):
         and listens for messages.
         """
         asyncio.create_task(self.trade())
-        # asyncio.create_task(self.view_books())
+        asyncio.create_task(self.view_books())
         await self.connect()
 
 

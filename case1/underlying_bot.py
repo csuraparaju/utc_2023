@@ -15,8 +15,8 @@ UNDERLYING: List[str] = ['EPT', 'DLO', 'MKU', 'IGM', 'BRV']
 class UnderlyingMM(xchange_client.XChangeClient):
     def __init__(self, host: str, username: str, password: str) -> None:
         super().__init__(host, username, password)
-        self.edge = 50 # the spread between the bid and the ask prices
-        self.size = 10 # start out with placing 10 orders
+        self.edge = 20 # the spread between the bid and the ask prices
+        self.size = 5 # start out with placing 10 orders
 
         # Keeps track of the current fair price of each symbol
         self.fairs = defaultdict(int) # symbol -> fair price
@@ -71,14 +71,14 @@ class UnderlyingMM(xchange_client.XChangeClient):
                         if order[0].limit.px == bid:
                             break
                     else:
-                        bid -= 1
+                        bid += 1
 
                 if ask in self.order_books[symbol].asks:
                     for order in self.symbol_open_orders[symbol]:
                         if order[0].limit.px == ask:
                             break
                     else:
-                        ask += 1
+                        ask -= 1
 
 
                 print(f"Buying at {bid} and selling at {ask}")

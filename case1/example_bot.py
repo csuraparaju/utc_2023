@@ -86,11 +86,12 @@ class MyXchangeClient(xchange_client.XChangeClient):
 
 
 async def main():
-    SERVER = 'staging.uchicagotradingcompetition.com:3333'
-    dotenv_path = find_dotenv("../credentials.env")
-    secrets = dotenv_values(dotenv_path)
-    my_client = MyXchangeClient(SERVER, secrets['USERNAME'], secrets['PASSWORD'])
-    await my_client.start()
+    config = dotenv_values(find_dotenv('.env'))
+    SERVER = config['SERVER']
+    username = config['USERNAME']
+    password = config['PASSWORD']
+    bot = MyXchangeClient(SERVER, username, password)
+    await bot.start()
     return
 
 if __name__ == "__main__":

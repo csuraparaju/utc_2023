@@ -1,0 +1,39 @@
+{
+    "assets": [
+        {
+            "symbol": "DLO",
+            "distribution": "normal",
+            "mean": 4951.623015873016,
+            "std_dev": 287.4910432456289
+        },
+        {
+            "symbol" : "MKU",
+            "distribution": "lognormal",
+            "shape": 0.40270382418182865,
+            "location": 3733.1568842205147,
+            "scale": 1158.1320986157264,
+            "mean" : 4989.108610036893,
+            "std_dev" : 526.9920008067337
+        },
+        {
+            "symbol" : "IGM",
+            "distribution": "lognormal",
+            "shape": 0.5958785691616849,
+            "location": 4419.956929025464,
+            "scale": 1075.482212660808,
+            "mean" : 5704.373732014631,
+            "std_dev": 838.5995575897048
+        },
+        {
+            "symbol" : "BRV",
+            "distribution": "lognormal",
+            "shape": 0.3678754212094856,
+            "location": 3070.363652275149,
+            "scale": 1947.4387869918887,
+            "mean": 5154.138812391018,
+            "std_dev": 793.2513745580574
+        }
+    ],
+    "edge": 20,
+    "size": 10
+}

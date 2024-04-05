@@ -6,6 +6,8 @@ from collections import defaultdict
 UNDERLYING: List[str] = ['EPT', 'DLO', 'MKU', 'IGM', 'BRV']
 ETF: List[str] = ['JAK', 'SCP']
 
+HIGH_CORR: List[tuple] = [('IGM', 'EPT'), ('BRV', 'MKU'), ('MKU', 'DLO'), ('BRV', 'DLO')]
+
 ETF_COMPOSITION = {
     'JAK' : {'EPT': 2, 'DLO': 5, 'MKU': 3},
     'SCP' : {'IGM': 3, 'BRV': 4, 'EPT': 3}
@@ -17,14 +19,17 @@ ETF_SWAP_COST = {
 }
 
 
-class ETFArbBot(xchange_client.XChangeClient):
+class PairsTradETFArbBot(xchange_client.XChangeClient):
     def __init__(self, host: str, username: str, password: str) -> None:
         super().__init__(host, username, password)
-        self.best_bids = defaultdict(int) # symbol -> best bid price
-        self.best_asks = defaultdict(int) # symbol -> best ask price
-        self.symbol_open_orders = defaultdict(list) # Symbol -> list of order ids
+        self.best_bids = defaultdict(int)
+        self.best_asks = defaultdict(int)
+        self.rolling_window = 60 # window size for rollign average and std
+        self.ratios = defaultdict(list)
+        self.qty = 1 # qty for each asset to trade
+        self.my_positions = defaultdict(int)
         self.tick = 0
-
+        self.pending_cancel = set()
 
     async def bot_handle_book_update(self, symbol: str) -> None:
         order_book = self.order_books[symbol]
@@ -35,31 +40,33 @@ class ETFArbBot(xchange_client.XChangeClient):
         self.best_bids[symbol] = best_bid
         self.best_asks[symbol] = best_ask
 
-        self.symbol_open_orders[symbol] = [order for order in self.open_orders.values() if order[0].symbol == symbol]
+        for asset1, asset2 in HIGH_CORR:
+            if self.best_bids[asset1] and self.best_asks[asset2]:
+                self.ratios[(asset1, asset2)].append(self.best_bids[asset1] / self.best_asks[asset2])
+    
+    
+    async def cancel_outdated_orders(self):
+        clone = {id: (order, qty, is_market) for id, (order, qty, is_market) in self.open_orders.items()}
+        for id, (_, _, _) in clone.items():
+            if id in self.pending_cancel:
+                continue
+            await self.cancel_order(id)
+            self.pending_cancel.add(id)
 
-    async def bot_handle_order_fill(self, order_id: str, qty: int, price: int):
-        print(f"Order {order_id} filled with {qty} shares at {price}")
-        order = self.open_orders[order_id]
-        symbol = order[0].symbol
-        self.symbol_open_orders[symbol].remove(order) if order in self.symbol_open_orders[symbol] else None
+    async def replace_order(self, order, order_id):
+        if order.side == 1:
+            price = self.best_bids[order.symbol]
+            id = await self.place_order(order.symbol, order.limit.qty, xchange_client.Side.BUY, price)
+        else:
+            price = self.my_current_prices[order.symbol]["Best Ask"]
+            print("SELL ", order.symbol, " AT: ", price, "LIQUIDATE AT: ", self.liquidate_stocks[order.symbol])
+            id = await self.place_order(order.symbol, quant, xchange_client.Side.SELL, price)
+        del self.id_to_spread[order_id]
+        self.id_to_spread[id] = (spread, quant)
 
-    async def bot_handle_order_rejected(self, order_id: str, reason: str) -> None:
-        print(f"Order {order_id} rejected because of {reason}")
-        order = self.open_orders[order_id]
-        symbol = order[0].symbol
-        self.symbol_open_orders[symbol].remove(order) if order in self.symbol_open_orders[symbol] else None
-
-
-    async def bot_handle_trade_msg(self, symbol: str, price: int, qty: int):
-        # TODO: Insert logic so that the bot can can figure out what the hedge funds
-        # are doing and trade accordingly. Any trade with large qty should be considered
-        # as a signal that the hedge funds are trying to move the market.
-        pass
 
     async def check_etf_arb(self):
         self.tick += 1
-        if len(self.open_orders)>0:
-            return
         for etf in ETF:
 
             # Check if we can BUY ETF and SELL Underlying to make Profit
@@ -110,6 +117,36 @@ class ETFArbBot(xchange_client.XChangeClient):
                 await self.place_swap_order(f"to{etf}", 1)
             
 
+
+    async def check_for_trade(self):
+        self.tick += 1
+        for asset1, asset2 in HIGH_CORR:
+            ratios = self.ratios[(asset1, asset2)]
+            if len(ratios) < self.rolling_window:
+                continue
+
+            rolling_avg = sum(ratios[-self.rolling_window:]) / self.rolling_window
+            rolling_std = (sum((x - rolling_avg) ** 2 for x in ratios[-self.rolling_window:]) / self.rolling_window) ** 0.5
+
+            if rolling_std == 0:
+                continue
+
+            z_score = (ratios[-1] - rolling_avg) / rolling_std
+
+            if z_score == 1:
+                print(f'Selling {asset1} and buying {asset2} since z_score is greater than 1')
+                await self.place_order(asset1, self.qty, xchange_client.Side.SELL)
+                self.my_positions[asset1] -= self.qty
+                await self.place_order(asset2, self.qty, xchange_client.Side.BUY)
+                self.my_positions[asset2] += self.qty
+            elif z_score == -1:
+                print(f'Selling {asset2} and buying {asset1} since z_score is less than -1')
+                await self.place_order(asset1, self.qty, xchange_client.Side.BUY)
+                self.my_positions[asset1] += self.qty
+                await self.place_order(asset2, self.qty, xchange_client.Side.SELL)
+                self.my_positions[asset2] -= self.qty
+
+
     def calulate_pnl(self):
         cash = self.positions['cash']
         for symbol, qty in self.positions.items():
@@ -122,16 +159,16 @@ class ETFArbBot(xchange_client.XChangeClient):
         print(f"NET PROFIT SO FAR: {cash}")
         print()
 
+    # TODO: Call the check_etf_arb function to do arb in parallel.
     async def trade(self):
-        # call the check_etf_arb function every second.
-        # At the same time, settle all positions every minute.
         while True:
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.2)
+            await self.check_for_trade()
             await self.check_etf_arb()
+            await self.cancel_outdated_orders()
 
             if self.tick % 12 == 0:
                 self.calulate_pnl()
-
 
     async def start(self):
         asyncio.create_task(self.trade())
@@ -142,11 +179,12 @@ async def main():
     username = "carnegiemellon"
     password = "charizard-exeggutor-399"
 
-    bot = ETFArbBot(SERVER, username, password)
+    bot = PairsTradETFArbBot(SERVER, username, password)
     await bot.start()
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     result = loop.run_until_complete(main())
+
 
 

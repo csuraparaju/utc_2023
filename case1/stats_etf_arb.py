@@ -1,7 +1,6 @@
 from xchangelib import xchange_client
 import asyncio
 from typing import List, Dict
-from dotenv import dotenv_values, find_dotenv
 from collections import defaultdict
 
 UNDERLYING: List[str] = ['EPT', 'DLO', 'MKU', 'IGM', 'BRV']
@@ -117,10 +116,9 @@ class PairsTradETFArbBot(xchange_client.XChangeClient):
         await self.connect()
 
 async def main():
-    config = dotenv_values(find_dotenv('.env'))
-    SERVER = config['SERVER']
-    username = config['USERNAME']
-    password = config['PASSWORD']
+    SERVER = '18.188.190.235:3333'
+    username = "carnegiemellon"
+    password = "charizard-exeggutor-399"
 
     bot = PairsTradETFArbBot(SERVER, username, password)
     await bot.start()

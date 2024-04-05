@@ -1,7 +1,6 @@
 from xchangelib import xchange_client
 import asyncio
 from typing import List, Dict
-from dotenv import dotenv_values, find_dotenv
 from collections import defaultdict
 
 UNDERLYING: List[str] = ['EPT', 'DLO', 'MKU', 'IGM', 'BRV']
@@ -29,9 +28,10 @@ class ETFArbBot(xchange_client.XChangeClient):
 
     async def bot_handle_book_update(self, symbol: str) -> None:
         order_book = self.order_books[symbol]
-
-        best_bid = max(order_book.bids.keys()) if order_book.bids else float('-inf')
-        best_ask = min(order_book.asks.keys()) if order_book.asks else float('inf')
+        asks = [k for k,v in order_book.asks.items() if v != 0]
+        bids = [k for k,v in order_book.bids.items() if v != 0]
+        best_bid = max(bids) if bids else float('-inf')
+        best_ask = min(asks) if asks else float('inf')
         self.best_bids[symbol] = best_bid
         self.best_asks[symbol] = best_ask
 
@@ -58,30 +58,57 @@ class ETFArbBot(xchange_client.XChangeClient):
 
     async def check_etf_arb(self):
         self.tick += 1
+        if len(self.open_orders)>0:
+            return
         for etf in ETF:
+
+            # Check if we can BUY ETF and SELL Underlying to make Profit
             # Calculate the net asset value (NAV) of the ETF
             nav = sum(self.best_bids[asset] * qty for asset, qty in ETF_COMPOSITION[etf].items())
-            etf_price = self.best_bids[etf]
-
-            # Calculate the theoretical fair price of the ETF
+            etf_price = self.best_asks[etf]
+            
             theoretical_price = nav / sum(ETF_COMPOSITION[etf].values())
-
-            # Calculate the arbitrage opportunity, considering the redemption/creation costs
-            arb_spread = etf_price - theoretical_price
-            arb_threshold = ETF_SWAP_COST[etf]
+            arb_spread = theoretical_price - etf_price 
+            arb_threshold = ETF_SWAP_COST[etf]+40
 
             print(f"ETF: {etf}, NAV: {nav}, ETF Price: {etf_price}, Theoretical Price: {theoretical_price}, Spread: {arb_spread}")
 
+            if arb_spread > arb_threshold:
+                print("ABRING BUY ETF AND SELL UNDERLYING")
+                print("BIDS: ")
+                print(self.best_bids)
+                print("ASKS:")
+                print(self.best_asks)
+                for key, val in ETF_COMPOSITION[etf].items():
+                    await self.place_order(key, val, xchange_client.Side.SELL, self.best_bids[key]-10)
+                await self.place_order(etf, 10, xchange_client.Side.BUY, self.best_asks[etf]+10)
+                await self.place_swap_order(f"from{etf}", 1)
+
+            # Check if we can SELL ETF and BUY Underlying to make Profit
+            # Calculate the net asset cost (NAC) of the ETF
+            nac = sum(self.best_asks[asset] * qty for asset, qty in ETF_COMPOSITION[etf].items())
+            etf_value = self.best_bids[etf]
+            # Calculate the theoretical fair price of the ETF
+            theoretical_price = nac / sum(ETF_COMPOSITION[etf].values())
+
+            # Calculate the arbitrage opportunity, considering the redemption/creation costs
+            arb_spread = etf_value - theoretical_price
+            arb_threshold = ETF_SWAP_COST[etf]+40
+
+            print(f"ETF: {etf}, NAC: {nac}, ETF VALUE: {etf_value}, Theoretical Price: {theoretical_price}, Spread: {arb_spread}")
+
             # Swap more conservatively since it costs money to swap.
-            if abs(arb_spread) > arb_threshold:
-                if arb_spread > 0:
-                    await self.place_swap_order(f"from{etf}", 1)
-                else:
-                    # ETF is underpriced, buy ETF and sell underlying assets
-                    await self.place_swap_order(f"to{etf}", 1)
-            else:
-                # No significant arbitrage opportunity, do nothing
-                pass
+            if arb_spread > arb_threshold:
+                print("ABRING SELL ETF AND BUY UNDERLYING")
+                print("BIDS: ")
+                print(self.best_bids)
+                print("ASKS:")
+                print(self.best_asks)
+                for key, val in ETF_COMPOSITION[etf].items():
+                    await self.place_order(key, val, xchange_client.Side.BUY, self.best_asks[key]+10)
+                await self.place_order(etf, 10, xchange_client.Side.SELL, self.best_bids[etf]-10)
+                await self.place_swap_order(f"to{etf}", 1)
+            
 
     def calulate_pnl(self):
         cash = self.positions['cash']
@@ -106,16 +133,14 @@ class ETFArbBot(xchange_client.XChangeClient):
                 self.calulate_pnl()
 
 
-
     async def start(self):
         asyncio.create_task(self.trade())
         await self.connect()
 
 async def main():
-    config = dotenv_values(find_dotenv('.env'))
-    SERVER = config['SERVER']
-    username = config['USERNAME']
-    password = config['PASSWORD']
+    SERVER = '18.188.190.235:3333'
+    username = "carnegiemellon"
+    password = "charizard-exeggutor-399"
 
     bot = ETFArbBot(SERVER, username, password)
     await bot.start()

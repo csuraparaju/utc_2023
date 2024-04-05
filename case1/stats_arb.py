@@ -9,91 +9,97 @@ ETF: List[str] = ['JAK', 'SCP']
 
 HIGH_CORR: List[tuple] = [('IGM', 'EPT'), ('BRV', 'MKU'), ('MKU', 'DLO'), ('BRV', 'DLO')]
 
-class PairsTradingBot(xchange_client.XChangeClient):
-    def __init__(self, host: str, username: str, password: str, asset1: str, asset2: str) -> None:
+ETF_COMPOSITION = {
+    'JAK' : {'EPT': 2, 'DLO': 5, 'MKU': 3},
+    'SCP' : {'IGM': 3, 'BRV': 4, 'EPT': 3}
+}
+
+EFT_SWAP_COST = {
+    'JAK' : 5,
+    'SCP' : 5
+}
+
+
+class PairsTradETFArbBot(xchange_client.XChangeClient):
+    def __init__(self, host: str, username: str, password: str) -> None:
         super().__init__(host, username, password)
-        self.asset1 = asset1
-        self.asset2 = asset2
         self.best_bids = defaultdict(int)
         self.best_asks = defaultdict(int)
         self.rolling_window = 20
-        self.ratios = [] # List of ratios of asset1 to asset2
-        self.qty = 3 # Quantity to trade for now
+        self.ratios = defaultdict(list)
+        self.qty = 3 # qty for each asset to trade
+        self.my_positions = defaultdict(int)
 
     async def bot_handle_book_update(self, symbol: str) -> None:
         order_book = self.order_books[symbol]
-        best_bid = max(order_book.bids.keys()) if order_book.bids else 0
+        best_bid = max(order_book.bids.keys()) if order_book.bids else float('-inf')
         best_ask = min(order_book.asks.keys()) if order_book.asks else float('inf')
 
-        if symbol == self.asset1:
-            self.best_bids[symbol] = best_bid
-            self.best_asks[symbol] = best_ask
-        elif symbol == self.asset2:
-            self.best_bids[symbol] = best_bid
-            self.best_asks[symbol] = best_ask
+        self.best_bids[symbol] = best_bid
+        self.best_asks[symbol] = best_ask
 
-        if self.best_bids[self.asset1] and self.best_asks[self.asset2]:
-            self.ratios.append(self.best_bids[self.asset1] / self.best_asks[self.asset2])
+        for asset1, asset2 in HIGH_CORR:
+            if self.best_bids[asset1] and self.best_asks[asset2]:
+                self.ratios[(asset1, asset2)].append(self.best_bids[asset1] / self.best_asks[asset2])
 
+
+
+    async def check_etf_arb(self):
+        # Compute the theoretical price of the ETF based on the underlying assets
+        # Compare this with the actual ETF price and see if there is any deviation
+        for etf in ETF:
+            theorec_px = sum(self.best_asks[asset] * qty for asset, qty in ETF_COMPOSITION[etf].items())
+            actual_px = self.best_bids[etf]
+            if theorec_px + EFT_SWAP_COST[etf] < actual_px:
+                print(f'Buying {etf} and selling the underlying assets')
+                await self.place_swap_order(f'to{etf}', 1)
+                self.my_positions[etf] += 1
+                for asset, qty in ETF_COMPOSITION[etf].items():
+                    self.my_positions[asset] -= qty
+            elif theorec_px - EFT_SWAP_COST[etf] > actual_px:
+                print(f'Buying the underlying assets and selling {etf}')
+                await self.place_swap_order(f'from{etf}', 1)
+                self.my_positions[etf] -= 1
+                for asset, qty in ETF_COMPOSITION[etf].items():
+                    self.my_positions[asset] += qty
+
+    async def check_for_trade(self):
+        for asset1, asset2 in HIGH_CORR:
+            ratios = self.ratios[(asset1, asset2)]
+            if len(ratios) < self.rolling_window:
+                continue
+
+            rolling_avg = sum(ratios[-self.rolling_window:]) / self.rolling_window
+            rolling_std = (sum((x - rolling_avg) ** 2 for x in ratios[-self.rolling_window:]) / self.rolling_window) ** 0.5
+
+            if rolling_std == 0:
+                continue
+
+            z_score = (ratios[-1] - rolling_avg) / rolling_std
+
+            if z_score == 1:
+                print(f'Selling {asset1} and buying {asset2} since z_score is greater than 1')
+                await self.place_order(asset1, self.qty, xchange_client.Side.SELL)
+                self.my_positions[asset1] -= self.qty
+                await self.place_order(asset2, self.qty, xchange_client.Side.BUY)
+                self.my_positions[asset2] += self.qty
+            elif z_score == -1:
+                print(f'Selling {asset2} and buying {asset1} since z_score is less than -1')
+                await self.place_order(asset1, self.qty, xchange_client.Side.BUY)
+                self.my_positions[asset1] += self.qty
+                await self.place_order(asset2, self.qty, xchange_client.Side.SELL)
+                self.my_positions[asset2] -= self.qty
 
     async def trade(self):
         while True:
             await asyncio.sleep(1)
             await self.check_for_trade()
-
-    async def check_for_trade(self):
-        if len(self.ratios) < self.rolling_window:
-            return
-
-        rolling_avg = sum(self.ratios[-self.rolling_window:]) / self.rolling_window
-        rolling_std = (sum((x - rolling_avg) ** 2 for x in self.ratios[-self.rolling_window:]) / self.rolling_window) ** 0.5
-
-        if rolling_std == 0:
-            return
-
-        print(f'Rolling Average: {rolling_avg}, Rolling Std: {rolling_std}')
-
-
-        z_score = (self.ratios[-1] - rolling_avg) / rolling_std
-
-        print(f"Z Score: {(self.ratios[-1] - rolling_avg) / rolling_std}")
-
-        # If z_score is greater than 1, sell asset1 and buy asset2
-        # If z_score is less than -1, buy asset1 and sell asset2
-        if z_score == 1:
-            print('Selling asset1 and buying asset2 since z_score is greater than 1')
-            await self.place_order(self.asset1, self.qty, xchange_client.Side.SELL)
-            await self.place_order(self.asset2, self.qty, xchange_client.Side.BUY)
-        elif z_score == -1:
-            print('Buying asset1 and selling asset2 since z_score is less than -1')
-            await self.place_order(self.asset1, self.qty, xchange_client.Side.SELL)
-            await self.place_order(self.asset2, self.qty, xchange_client.Side.BUY)
+            await asyncio.sleep(1)
+            await self.check_etf_arb()
 
     async def start(self):
         asyncio.create_task(self.trade())
         await self.connect()
-
-# Create a manger class that will manage all the bots and run them in
-# seperate threads.
-
-class PairsTradingManager:
-    def __init__(self, host: str, username: str, password: str) -> None:
-        self.host = host
-        self.username = username
-        self.password = password
-        self.bots = []
-
-    def create_bots(self) -> None:
-        asset1, asset2 = HIGH_CORR[0]
-        bot = PairsTradingBot(self.host, self.username, self.password, asset1, asset2)
-        self.bots.append(bot)
-        # for asset1, asset2 in HIGH_CORR[0]:
-        #     bot = PairsTradingBot(self.host, self.username, self.password, asset1, asset2)
-        #     self.bots.append(bot)
-
-    async def start(self) -> None:
-        self.create_bots()
-        await asyncio.gather(*(bot.start() for bot in self.bots))
 
 async def main():
     config = dotenv_values(find_dotenv('.env'))
@@ -101,17 +107,12 @@ async def main():
     username = config['USERNAME']
     password = config['PASSWORD']
 
-    manager = PairsTradingManager(SERVER, username, password)
-    await manager.start()
+    bot = PairsTradETFArbBot(SERVER, username, password)
+    await bot.start()
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     result = loop.run_until_complete(main())
-
-
-
-
-
 
 
 

@@ -75,7 +75,6 @@ class ETFArbBot(xchange_client.XChangeClient):
             # Swap more conservatively since it costs money to swap.
             if abs(arb_spread) > arb_threshold:
                 if arb_spread > 0:
-                    # ETF is overpriced, sell ETF and buy underlying assets
                     await self.place_swap_order(f"from{etf}", 1)
                 else:
                     # ETF is underpriced, buy ETF and sell underlying assets

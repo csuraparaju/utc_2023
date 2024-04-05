@@ -25,10 +25,11 @@ class PairsTradETFArbBot(xchange_client.XChangeClient):
         super().__init__(host, username, password)
         self.best_bids = defaultdict(int)
         self.best_asks = defaultdict(int)
-        self.rolling_window = 20
+        self.rolling_window = 60 # window size for rollign average and std
         self.ratios = defaultdict(list)
-        self.qty = 3 # qty for each asset to trade
+        self.qty = 1 # qty for each asset to trade
         self.my_positions = defaultdict(int)
+        self.tick = 0
 
     async def bot_handle_book_update(self, symbol: str) -> None:
         order_book = self.order_books[symbol]
@@ -41,8 +42,6 @@ class PairsTradETFArbBot(xchange_client.XChangeClient):
         for asset1, asset2 in HIGH_CORR:
             if self.best_bids[asset1] and self.best_asks[asset2]:
                 self.ratios[(asset1, asset2)].append(self.best_bids[asset1] / self.best_asks[asset2])
-
-
 
     async def check_etf_arb(self):
         # Compute the theoretical price of the ETF based on the underlying assets
@@ -64,6 +63,7 @@ class PairsTradETFArbBot(xchange_client.XChangeClient):
                     self.my_positions[asset] += qty
 
     async def check_for_trade(self):
+        self.tick += 1
         for asset1, asset2 in HIGH_CORR:
             ratios = self.ratios[(asset1, asset2)]
             if len(ratios) < self.rolling_window:
@@ -90,12 +90,27 @@ class PairsTradETFArbBot(xchange_client.XChangeClient):
                 await self.place_order(asset2, self.qty, xchange_client.Side.SELL)
                 self.my_positions[asset2] -= self.qty
 
+
+    def calulate_pnl(self):
+        cash = self.positions['cash']
+        for symbol, qty in self.positions.items():
+            if symbol == 'cash':
+                continue
+            settlement_fair = (self.best_bids[symbol] + self.best_asks[symbol]) // 2
+            cash += qty * settlement_fair
+
+        print()
+        print(f"NET PROFIT SO FAR: {cash}")
+        print()
+
+    # TODO: Call the check_etf_arb function to do arb in parallel.
     async def trade(self):
         while True:
             await asyncio.sleep(1)
             await self.check_for_trade()
-            await asyncio.sleep(1)
-            await self.check_etf_arb()
+
+            if self.tick % 12 == 0:
+                self.calulate_pnl()
 
     async def start(self):
         asyncio.create_task(self.trade())
